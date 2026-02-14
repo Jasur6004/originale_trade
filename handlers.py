@@ -33,6 +33,11 @@ class AIAssistantState(StatesGroup):
     waiting_for_question = State()
 
 
+class BroadcastState(StatesGroup):
+    waiting_for_message = State()
+    confirm_send = State()
+
+
 def get_user_lang(user_id: int) -> str:
     try:
         return db.get_language(user_id)
@@ -44,6 +49,14 @@ def get_user_lang(user_id: int) -> str:
 async def cmd_start(message: Message, state: FSMContext):
     """Обработчик команды /start"""
     user_id = message.from_user.id
+    
+    # Проверка на бан
+    if db.is_user_banned(user_id):
+        await message.answer("🚫 Вы заблокированы администратором.", parse_mode="HTML")
+        return
+
+    username = message.from_user.username
+    full_name = message.from_user.full_name
     username = message.from_user.username
     full_name = message.from_user.full_name
     
@@ -435,6 +448,17 @@ async def get_signal_callback(callback: CallbackQuery):
         await callback.message.delete()
     except Exception:
         pass
+
+    # Проверка на выходные дни (рынок закрыт)
+    if is_weekend():
+        weekend_text = t(lang, "weekend")
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=t(lang, "btn_get_otc"), callback_data="get_otc_signals")],
+            [InlineKeyboardButton(text=t(lang, "btn_main"), callback_data="main_menu")]
+        ])
+        await callback.message.answer(weekend_text, reply_markup=keyboard, parse_mode="HTML")
+        return
+
     # Мгновенное сообщение пользователю, что идёт анализ рынка
     try:
         searching_text = (
@@ -1167,4 +1191,280 @@ async def main_menu_callback(callback: CallbackQuery):
     except Exception:
         pass
     await show_main_menu(callback.message, lang)
+
+
+# --- ADMIN PANEL HANDLERS ---
+
+def is_admin(user_id: int, username: str) -> bool:
+    """Проверка прав администратора"""
+    # Проверка по username (из конфига)
+    if username and config.ADMIN_USERNAME and username.replace("@", "") == config.ADMIN_USERNAME.replace("@", ""):
+        return True
+    
+    # Можно добавить проверку по ID, если добавить ADMIN_ID в конфиг
+    # if user_id == config.ADMIN_ID:
+    #     return True
+    
+    return False
+
+
+@router.message(Command("admin"))
+async def cmd_admin(message: Message):
+    """Команда /admin для входа в админ-панель"""
+    if not is_admin(message.from_user.id, message.from_user.username):
+        return  # Игнорируем, если не админ
+
+    stats = db.get_users_stats()
+    
+    text = (
+        f"🛡 <b>АДМИН ПАНЕЛЬ</b>\n\n"
+        f"👥 <b>Пользователей:</b> {stats.get('total', 0)}\n"
+        f"🟢 <b>Активных:</b> {stats.get('active', 0)}\n"
+        f"🆕 <b>Новых (24ч):</b> {stats.get('new_24h', 0)}\n"
+    )
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📢 Рассылка", callback_data="admin_broadcast")],
+        [InlineKeyboardButton(text="💾 Скачать БД", callback_data="admin_export_db")],
+        [InlineKeyboardButton(text="📊 Обновить стату", callback_data="admin_refresh_stats")],
+        [InlineKeyboardButton(text="❌ Закрыть", callback_data="admin_close")]
+    ])
+
+    await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
+
+
+@router.callback_query(F.data == "admin_refresh_stats")
+async def admin_refresh_stats_callback(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id, callback.from_user.username):
+        return
+
+    stats = db.get_users_stats()
+    text = (
+        f"🛡 <b>АДМИН ПАНЕЛЬ</b>\n\n"
+        f"👥 <b>Пользователей:</b> {stats.get('total', 0)}\n"
+        f"🟢 <b>Активных:</b> {stats.get('active', 0)}\n"
+        f"🆕 <b>Новых (24ч):</b> {stats.get('new_24h', 0)}\n"
+    )
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📢 Рассылка", callback_data="admin_broadcast")],
+        [InlineKeyboardButton(text="💾 Скачать БД", callback_data="admin_export_db")],
+        [InlineKeyboardButton(text="📊 Обновить стату", callback_data="admin_refresh_stats")],
+        [InlineKeyboardButton(text="❌ Закрыть", callback_data="admin_close")]
+    ])
+    
+    try:
+        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+    except Exception:
+        await callback.answer("Статистика актуальна")
+
+
+@router.callback_query(F.data == "admin_close")
+async def admin_close_callback(callback: CallbackQuery):
+    """Закрыть админ-панель"""
+    await callback.message.delete()
+
+
+@router.callback_query(F.data == "admin_export_db")
+async def admin_export_db_callback(callback: CallbackQuery):
+    """Экспорт базы данных"""
+    if not is_admin(callback.from_user.id, callback.from_user.username):
+        return
+
+    await callback.answer("Подготовка файла...", show_alert=False)
+    
+    db_file = FSInputFile("trading_bot.db")
+    await callback.message.answer_document(
+        document=db_file,
+        caption=f"💾 Резервная копия базы данных от {datetime.now().strftime('%d.%m.%Y %H:%M')}"
+    )
+
+
+@router.callback_query(F.data == "admin_broadcast")
+async def admin_broadcast_callback(callback: CallbackQuery, state: FSMContext):
+    """Начало рассылки"""
+    if not is_admin(callback.from_user.id, callback.from_user.username):
+        return
+
+    await callback.message.answer(
+        "📢 <b>Рассылка сообщений</b>\n\n"
+        "Введите текст сообщения или отправьте фото/видео с подписью.\n"
+        "Для отмены нажмите /cancel",
+        parse_mode="HTML"
+    )
+    await state.set_state(BroadcastState.waiting_for_message)
+    await callback.answer()
+
+
+@router.message(BroadcastState.waiting_for_message)
+async def process_broadcast_message(message: Message, state: FSMContext):
+    """Получение сообщения для рассылки"""
+    if message.text == "/cancel":
+        await state.clear()
+        await message.answer("Рассылка отменена.")
+        return
+
+    # Сохраняем ID сообщения и chat_id для копирования
+    await state.update_data(message_id=message.message_id, chat_id=message.chat.id)
+    
+    # Предпросмотр
+    await message.copy_to(chat_id=message.chat.id)
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Отправить всем", callback_data="broadcast_confirm")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="broadcast_cancel")]
+    ])
+    
+    await message.answer(
+        "👆 ЭТО ПРЕДПРОСМОТР.\n\n"
+        "Отправить сообщение всем пользователям?",
+        reply_markup=keyboard
+    )
+    await state.set_state(BroadcastState.confirm_send)
+
+
+@router.callback_query(F.data == "broadcast_cancel", BroadcastState.confirm_send)
+async def broadcast_cancel_callback(callback: CallbackQuery, state: FSMContext):
+    """Отмена рассылки"""
+    await state.clear()
+    await callback.message.edit_text("❌ Рассылка отменена.")
+
+
+@router.callback_query(F.data == "broadcast_confirm", BroadcastState.confirm_send)
+async def broadcast_confirm_callback(callback: CallbackQuery, state: FSMContext):
+    """Подтверждение и запуск рассылки"""
+    data = await state.get_data()
+    msg_id = data.get("message_id")
+    chat_id = data.get("chat_id")
+    
+    await callback.message.edit_text("⏳ Рассылка запущена... Это может занять время.")
+    
+    users = db.get_all_users()
+    count = 0
+    blocked = 0
+    
+    for user_id in users:
+        try:
+            await callback.bot.copy_message(
+                chat_id=user_id,
+                from_chat_id=chat_id,
+                message_id=msg_id
+            )
+            count += 1
+            await asyncio.sleep(0.05)  # Пауза чтобы не ловить флуд-лимит
+        except Exception:
+            blocked += 1
+            
+    await callback.message.answer(
+        f"✅ <b>Рассылка завершена!</b>\n\n"
+        f"Отправлено: {count}\n"
+        f"Заблокировано/Недоставлено: {blocked}",
+        parse_mode="HTML"
+    )
+    await state.clear()
+
+
+@router.message(Command("ban"))
+async def cmd_ban_user(message: Message):
+    """Команда /ban <user_id>"""
+    if not is_admin(message.from_user.id, message.from_user.username):
+        return
+
+    try:
+        args = message.text.split()
+        if len(args) < 2:
+            await message.answer("Использование: /ban <user_id>")
+            return
+        
+        target_id = int(args[1])
+        if db.ban_user(target_id):
+            await message.answer(f"🚫 Пользователь {target_id} заблокирован.")
+            # Можно попробовать отправить уведомление юзеру
+            try:
+                await message.bot.send_message(target_id, "🚫 Вы были заблокированы администратором.")
+            except:
+                pass
+        else:
+            await message.answer("❌ Ошибка при блокировке (возможно, пользователя нет в базе).")
+    except ValueError:
+        await message.answer("❌ ID должен быть числом.")
+
+
+@router.message(Command("unban"))
+async def cmd_unban_user(message: Message):
+    """Команда /unban <user_id>"""
+    if not is_admin(message.from_user.id, message.from_user.username):
+        return
+
+    try:
+        args = message.text.split()
+        if len(args) < 2:
+            await message.answer("Использование: /unban <user_id>")
+            return
+        
+        target_id = int(args[1])
+        if db.unban_user(target_id):
+            await message.answer(f"✅ Пользователь {target_id} разблокирован.")
+            try:
+                await message.bot.send_message(target_id, "✅ Ваш аккаунт разблокирован.")
+            except:
+                pass
+        else:
+            await message.answer("❌ Ошибка при разблокировке.")
+    except ValueError:
+        await message.answer("❌ ID должен быть числом.")
+
+
+@router.message(Command("allow"))
+async def cmd_allow_user(message: Message):
+    """Команда /allow <user_id> - ручная активация"""
+    if not is_admin(message.from_user.id, message.from_user.username):
+        return
+
+    try:
+        args = message.text.split()
+        if len(args) < 2:
+            await message.answer("Использование: /allow <user_id>")
+            return
+        
+        target_id = int(args[1])
+        # Сначала разбаним если был забанен
+        db.unban_user(target_id)
+        # Активируем
+        if db.activate_user(target_id):
+            await message.answer(f"✅ Пользователь {target_id} активирован (доступ разрешен).")
+            try:
+                await message.bot.send_message(target_id, "🎉 Вам предоставлен доступ к боту! Нажмите /start")
+            except:
+                pass
+        else:
+            await message.answer("❌ Ошибка при активации.")
+    except ValueError:
+        await message.answer("❌ ID должен быть числом.")
+
+
+@router.message(Command("reset"))
+async def cmd_reset_user(message: Message):
+    """Команда /reset <user_id> - полное удаление пользователя"""
+    if not is_admin(message.from_user.id, message.from_user.username):
+        return
+
+    try:
+        args = message.text.split()
+        if len(args) < 2:
+            await message.answer("Использование: /reset <user_id>")
+            return
+        
+        target_id = int(args[1])
+        
+        if db.delete_user(target_id):
+            await message.answer(f"🗑 Пользователь {target_id} полностью удален из базы.")
+            try:
+                await message.bot.send_message(target_id, "🔄 Ваш аккаунт был сброшен администратором. Вы можете начать заново: /start")
+            except:
+                pass
+        else:
+            await message.answer("❌ Ошибка при удалении пользователя.")
+    except ValueError:
+        await message.answer("❌ ID должен быть числом.")
 
