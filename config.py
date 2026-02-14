@@ -16,7 +16,7 @@ ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "jr_editor")
 ACCESS_CODE = os.getenv("ACCESS_CODE", "originale")
 
 # Токен бота от @BotFather (берется из переменной окружения для безопасности)
-BOT_TOKEN = os.getenv("BOT_TOKEN1")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 # Ключ API Groq для ИИ-ассистента (бесплатный и не требует оплаты)
 # Получить ключ: https://console.groq.com/
