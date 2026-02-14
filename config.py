@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Партнерская ссылка для регистрации
-PARTNER_LINK = os.getenv("PARTNER_LINK", "https://your-partner-link.com/register")
+PARTNER_LINK = os.getenv("PARTNER_LINK", "https://u3.shortink.io/smart/GV0dn1IA9up6Yr")
 
 # Ваш Telegram юзернейм (без @)
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "jr_editor")
