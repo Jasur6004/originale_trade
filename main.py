@@ -45,8 +45,8 @@ async def main():
             logger.info("🔄 Перезапуск через 5 секунд...")
             await asyncio.sleep(5)
         finally:
-            # Закрываем сессию только при полном выходе (обычно не достигается в цикле)
-            if bot.session and not bot.session.closed:
+            # Закрываем сессию только при полном выходе
+            if bot.session:
                 await bot.session.close()
 
 
