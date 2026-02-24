@@ -10,7 +10,7 @@ load_dotenv()
 PARTNER_LINK = os.getenv("PARTNER_LINK", "https://u3.shortink.io/smart/GV0dn1IA9up6Yr")
 
 # Ваш Telegram юзернейм (без @)
-ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "jr_editor")
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "Modex_adm")
 
 # Секретный код доступа для активации бота
 ACCESS_CODE = os.getenv("ACCESS_CODE", "originale")
