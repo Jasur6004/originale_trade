@@ -13,7 +13,7 @@ PARTNER_LINK = os.getenv("PARTNER_LINK", "https://u3.shortink.io/smart/GV0dn1IA9
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "Modex_adm")
 
 # Секретный код доступа для активации бота
-ACCESS_CODE = os.getenv("ACCESS_CODE", "originale")
+ACCESS_CODE = os.getenv("ACCESS_CODE", "modex8687")
 
 # Токен бота от @BotFather (берется из переменной окружения для безопасности)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
