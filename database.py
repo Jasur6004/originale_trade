@@ -177,6 +177,40 @@ class Database:
             print(f"Ошибка при получении всех пользователей: {e}")
             return []
 
+    def get_users_list(self, limit: int = 20, offset: int = 0) -> list:
+        """Получение списка пользователей с пагинацией"""
+        try:
+            self.cursor.execute("""
+                SELECT user_id, username, full_name, is_active, is_banned, created_at
+                FROM users
+                ORDER BY created_at DESC
+                LIMIT ? OFFSET ?
+            """, (limit, offset))
+            rows = self.cursor.fetchall()
+            users = []
+            for row in rows:
+                users.append({
+                    'user_id': row[0],
+                    'username': row[1] or '—',
+                    'full_name': row[2] or '—',
+                    'is_active': row[3],
+                    'is_banned': row[4],
+                    'created_at': row[5]
+                })
+            return users
+        except Exception as e:
+            print(f"Ошибка при получении списка пользователей: {e}")
+            return []
+
+    def get_users_count(self) -> int:
+        """Получение общего количества пользователей"""
+        try:
+            self.cursor.execute("SELECT COUNT(*) FROM users")
+            return self.cursor.fetchone()[0]
+        except Exception as e:
+            print(f"Ошибка при получении количества пользователей: {e}")
+            return 0
+
     def get_users_stats(self) -> dict:
         """Получение статистики пользователей"""
         try:

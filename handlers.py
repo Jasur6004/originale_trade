@@ -1226,6 +1226,7 @@ async def cmd_admin(message: Message):
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📢 Рассылка", callback_data="admin_broadcast")],
         [InlineKeyboardButton(text="💾 Скачать БД", callback_data="admin_export_db")],
+        [InlineKeyboardButton(text="👥 Список пользователей", callback_data="admin_users_list_0")],
         [InlineKeyboardButton(text="📊 Обновить стату", callback_data="admin_refresh_stats")],
         [InlineKeyboardButton(text="❌ Закрыть", callback_data="admin_close")]
     ])
@@ -1249,6 +1250,7 @@ async def admin_refresh_stats_callback(callback: CallbackQuery):
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📢 Рассылка", callback_data="admin_broadcast")],
         [InlineKeyboardButton(text="💾 Скачать БД", callback_data="admin_export_db")],
+        [InlineKeyboardButton(text="👥 Список пользователей", callback_data="admin_users_list_0")],
         [InlineKeyboardButton(text="📊 Обновить стату", callback_data="admin_refresh_stats")],
         [InlineKeyboardButton(text="❌ Закрыть", callback_data="admin_close")]
     ])
@@ -1257,6 +1259,238 @@ async def admin_refresh_stats_callback(callback: CallbackQuery):
         await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
     except Exception:
         await callback.answer("Статистика актуальна")
+
+
+@router.callback_query(F.data.startswith("admin_users_list_"))
+async def admin_users_list_callback(callback: CallbackQuery):
+    """Показ списка пользователей с пагинацией"""
+    if not is_admin(callback.from_user.id, callback.from_user.username):
+        return
+
+    await callback.answer()
+    
+    # Получаем номер страницы из callback_data
+    try:
+        page = int(callback.data.split("_")[-1])
+    except (ValueError, IndexError):
+        page = 0
+
+    per_page = 10
+    offset = page * per_page
+    
+    users = db.get_users_list(limit=per_page, offset=offset)
+    total_users = db.get_users_count()
+    total_pages = max(1, (total_users + per_page - 1) // per_page)
+
+    if not users:
+        text = "📭 <b>Нет пользователей в базе</b>"
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_refresh_stats")]
+        ])
+        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+        return
+
+    # Формируем текст списка пользователей
+    text = f"👥 <b>СПИСОК ПОЛЬЗОВАТЕЛЕЙ</b> (стр. {page + 1}/{total_pages})\n\n"
+
+    for user in users:
+        user_id = user['user_id']
+        username = user['username']
+        is_active = user['is_active']
+        is_banned = user['is_banned']
+        
+        # Статус пользователя
+        if is_banned:
+            status = "🚫"
+        elif is_active:
+            status = "🟢"
+        else:
+            status = "⚪️"
+        
+        # Формируем строку пользователя
+        text += f"{status} <code>{user_id}</code> | {username}\n"
+
+    # Кнопки управления для каждого пользователя
+    buttons = []
+    for user in users:
+        user_id = user['user_id']
+        username = user['username']
+        is_banned = user['is_banned']
+        
+        # Форматируем username для отображения
+        display_name = f"@{username}" if username != "—" else f"ID:{user_id}"
+        
+        # Кнопки бана/разбана
+        if is_banned:
+            ban_btn = InlineKeyboardButton(text="✅ Разбан", callback_data=f"admin_unban_{user_id}")
+        else:
+            ban_btn = InlineKeyboardButton(text="🚫 Бан", callback_data=f"admin_ban_{user_id}")
+        
+        # Кнопка удаления
+        delete_btn = InlineKeyboardButton(text="🗑 Удалить", callback_data=f"admin_delete_{user_id}")
+        
+        # Строка с кнопками для одного пользователя
+        buttons.append([InlineKeyboardButton(text=f"👤 {display_name}", callback_data=f"admin_user_info_{user_id}")])
+        buttons.append([ban_btn, delete_btn])
+
+    # Навигация по страницам
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"admin_users_list_{page - 1}"))
+    if page < total_pages - 1:
+        nav_buttons.append(InlineKeyboardButton(text="➡️ Далее", callback_data=f"admin_users_list_{page + 1}"))
+    
+    if nav_buttons:
+        buttons.append(nav_buttons)
+    
+    # Кнопка возврата в админ-панель
+    buttons.append([InlineKeyboardButton(text="🔙 В админ-панель", callback_data="admin_refresh_stats")])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    try:
+        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+    except Exception as e:
+        print(f"Ошибка при показе списка пользователей: {e}")
+        await callback.message.answer(text, reply_markup=keyboard, parse_mode="HTML")
+
+
+@router.callback_query(F.data.startswith("admin_ban_"))
+async def admin_ban_user_callback(callback: CallbackQuery):
+    """Бан пользователя из списка"""
+    if not is_admin(callback.from_user.id, callback.from_user.username):
+        return
+
+    try:
+        user_id = int(callback.data.split("_")[-1])
+    except (ValueError, IndexError):
+        await callback.answer("Ошибка", show_alert=True)
+        return
+
+    if db.ban_user(user_id):
+        await callback.answer(f"Пользователь {user_id} заблокирован", show_alert=True)
+        # Уведомляем пользователя
+        try:
+            await callback.bot.send_message(user_id, "🚫 Вы были заблокированы администратором.")
+        except Exception:
+            pass
+    else:
+        await callback.answer("Ошибка при блокировке", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("admin_unban_"))
+async def admin_unban_user_callback(callback: CallbackQuery):
+    """Разбан пользователя из списка"""
+    if not is_admin(callback.from_user.id, callback.from_user.username):
+        return
+
+    try:
+        user_id = int(callback.data.split("_")[-1])
+    except (ValueError, IndexError):
+        await callback.answer("Ошибка", show_alert=True)
+        return
+
+    if db.unban_user(user_id):
+        await callback.answer(f"Пользователь {user_id} разблокирован", show_alert=True)
+        # Уведомляем пользователя
+        try:
+            await callback.bot.send_message(user_id, "✅ Ваш аккаунт разблокирован.")
+        except Exception:
+            pass
+    else:
+        await callback.answer("Ошибка при разблокировке", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("admin_delete_"))
+async def admin_delete_user_callback(callback: CallbackQuery):
+    """Удаление пользователя из списка"""
+    if not is_admin(callback.from_user.id, callback.from_user.username):
+        return
+
+    try:
+        user_id = int(callback.data.split("_")[-1])
+    except (ValueError, IndexError):
+        await callback.answer("Ошибка", show_alert=True)
+        return
+
+    if db.delete_user(user_id):
+        await callback.answer(f"Пользователь {user_id} удалён", show_alert=True)
+        # Уведомляем пользователя
+        try:
+            await callback.bot.send_message(user_id, "🔄 Ваш аккаунт был удалён администратором.")
+        except Exception:
+            pass
+    else:
+        await callback.answer("Ошибка при удалении", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("admin_user_info_"))
+async def admin_user_info_callback(callback: CallbackQuery):
+    """Информация о конкретном пользователе"""
+    if not is_admin(callback.from_user.id, callback.from_user.username):
+        return
+
+    try:
+        user_id = int(callback.data.split("_")[-1])
+    except (ValueError, IndexError):
+        await callback.answer("Ошибка", show_alert=True)
+        return
+
+    # Получаем информацию о пользователе
+    users = db.get_users_list(limit=1000, offset=0)
+    user = None
+    for u in users:
+        if u['user_id'] == user_id:
+            user = u
+            break
+
+    if not user:
+        await callback.answer("Пользователь не найден", show_alert=True)
+        return
+
+    # Формируем текст с информацией
+    username = user['username']
+    full_name = user['full_name']
+    is_active = user['is_active']
+    is_banned = user['is_banned']
+    created_at = user['created_at']
+
+    status_text = []
+    if is_banned:
+        status_text.append("🚫 Заблокирован")
+    if is_active:
+        status_text.append("🟢 Активен")
+    if not is_active and not is_banned:
+        status_text.append("⚪️ Неактивен")
+
+    text = (
+        f"👤 <b>ИНФОРМАЦИЯ О ПОЛЬЗОВАТЕЛЕ</b>\n\n"
+        f"🆔 <b>ID:</b> <code>{user_id}</code>\n"
+        f"📝 <b>Username:</b> {username}\n"
+        f"📛 <b>Имя:</b> {full_name}\n"
+        f"📊 <b>Статус:</b> {' | '.join(status_text)}\n"
+        f"📅 <b>Дата регистрации:</b> {created_at}"
+    )
+
+    # Кнопки действий
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="🚫 Разбан" if is_banned else "🚫 Бан",
+                callback_data=f"admin_unban_{user_id}" if is_banned else f"admin_ban_{user_id}"
+            ),
+            InlineKeyboardButton(text="🗑 Удалить", callback_data=f"admin_delete_{user_id}")
+        ],
+        [
+            InlineKeyboardButton(text="🔙 К списку", callback_data=f"admin_users_list_0")
+        ]
+    ])
+
+    try:
+        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+    except Exception as e:
+        print(f"Ошибка при показе инфо о пользователе: {e}")
+        await callback.answer("Ошибка", show_alert=True)
 
 
 @router.callback_query(F.data == "admin_close")
